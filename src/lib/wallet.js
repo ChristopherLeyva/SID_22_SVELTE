@@ -71,7 +71,7 @@ export async function hasInjectedProvider() {
   const pali = await detectPaliProvider();
   if (pali) return true;
   // `window.pali` (proveedor UTXO) solo lo inyecta Pali: confirma instalación.
-  return typeof window !== "undefined" && typeof window.pali !== "undefined";
+  return typeof window !== "undefined" && typeof window["pali"] !== "undefined";
 }
 
 /**
@@ -85,10 +85,10 @@ async function getPaliProvider() {
   // (marcador `window.pali` presente), usamos su provider de `window.ethereum`.
   if (
     typeof window !== "undefined" &&
-    typeof window.pali !== "undefined" &&
-    typeof window.ethereum !== "undefined"
+    typeof window["pali"] !== "undefined" &&
+    typeof window["ethereum"] !== "undefined"
   ) {
-    return window.ethereum;
+    return window["ethereum"];
   }
 
   throw new Error(
