@@ -36,19 +36,16 @@
   let errorMsg = "";
   let copied = false;
 
-  // Transferencia
   let txTo = "";
   let txAmount = "";
   let txHash = "";
   let txError = "";
   let isSending = false;
 
-  // Firmas
   let signature = "";
   let sigError = "";
   let isSigning = false;
 
-  // null = comprobando, false = Pali no detectada, true = Pali detectada
   let paliAvailable = null;
 
   let providerRef = null;
@@ -146,9 +143,7 @@
       await navigator.clipboard.writeText(text);
       copied = true;
       setTimeout(() => (copied = false), 1500);
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }
 
   function copyAddress() {
@@ -235,7 +230,6 @@
   </header>
 
   <section class="stage">
-    <!-- Columna izquierda: máquina abstracta -->
     <div class="plane">
       <div class="plane__grid"></div>
 
@@ -268,7 +262,6 @@
       <p class="mono plane__coord plane__coord--br">ETHERS v6</p>
     </div>
 
-    <!-- Columna derecha: control -->
     <section class="ctrl">
       <div class="row">
         <span class="row__k monodim">ESTADO</span>
@@ -492,7 +485,6 @@
     }
   }
 
-  /* ------------- hairlines / barras ------------- */
   .bar {
     display: flex;
     justify-content: space-between;
@@ -532,7 +524,6 @@
     font-weight: 400;
   }
 
-  /* ------------- stage: dos columnas cortadas por hairline ------------- */
   .stage {
     display: grid;
     grid-template-columns: 1.2fr 1fr;
@@ -583,7 +574,6 @@
     right: 1.6rem;
   }
 
-  /* ------------- máquina abstracta ------------- */
   .machine {
     position: relative;
     width: min(38vh, 34vw, 440px);
@@ -613,7 +603,6 @@
     stroke: rgba(255, 255, 255, 0.16);
   }
 
-  /* arcos orbitales */
   .a {
     stroke: #ff3d00;
     stroke-width: 2;
@@ -705,7 +694,6 @@
     color: #5f5f6b;
   }
 
-  /* ------------- columna de control ------------- */
   .ctrl {
     display: flex;
     flex-direction: column;
@@ -992,7 +980,6 @@
     min-height: 0;
   }
 
-  /* ------------- responsive ------------- */
   @media (max-width: 900px) {
     .stage {
       grid-template-columns: 1fr;
