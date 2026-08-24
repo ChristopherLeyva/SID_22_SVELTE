@@ -22,8 +22,12 @@
     sendNative,
     signMessage,
     subscribeToWalletEvents,
+    getNetworksSortedByBalance,
+    switchNetwork,
+    getPaliProvider,
+    EVM_NETWORKS,
   } from "./lib/wallet.js";
-  import { isAddress, parseEther } from "ethers";
+  import { isAddress, parseEther, BrowserProvider } from "ethers";
 
   let address = "";
   let balance = "";
@@ -54,6 +58,16 @@
 
   let explorerUrl = "";
 
+  // Ranking EVM de mayor a menor saldo
+  let rankedNetworks = [];
+  let isRanking = false;
+  let rankingError = "";
+
+  // Cambio de red desde UI
+  let selectedChainId = "";
+  let isSwitching = false;
+  let switchError = "";
+
   onMount(async () => {
     paliAvailable = await hasInjectedProvider();
   });
@@ -83,6 +97,46 @@
     explorerUrl = getExplorerUrl(chainId, "address", address) ?? "";
   }
 
+  async function loadRanking() {
+    if (!address) return;
+    isRanking = true;
+    rankingError = "";
+    try {
+      rankedNetworks = await getNetworksSortedByBalance(address);
+    } catch (err) {
+      rankingError = err.message || "ERROR AL CARGAR RANKING";
+    } finally {
+      isRanking = false;
+    }
+  }
+
+  async function handleSwitchNetwork(targetChainId) {
+    const cid = targetChainId ?? selectedChainId;
+    if (!cid) return;
+    switchError = "";
+    isSwitching = true;
+    try {
+      await switchNetwork(cid);
+      // La wallet emite chainChanged; actualizamos provider/signer/estado sin recargar
+      // Reconstruir BrowserProvider para reflejar nueva cadena
+      try {
+        const injected = await getPaliProvider();
+        providerRef = new BrowserProvider(injected);
+        signerRef = await providerRef.getSigner();
+      } catch {}
+      const net = await getNetwork(providerRef);
+      chainId = net.chainId;
+      networkName = net.name;
+      await Promise.all([refreshBalance(), refreshMeta()]);
+    } catch (err) {
+      // 4001 = usuario rechazó
+      if (err?.code === 4001) switchError = "CAMBIO RECHAZADO POR EL USUARIO";
+      else switchError = (err.message || "ERROR AL CAMBIAR DE RED").toUpperCase();
+    } finally {
+      isSwitching = false;
+    }
+  }
+
   async function handleConnect() {
     errorMsg = "";
     isLoading = true;
@@ -98,6 +152,8 @@
       networkName = net.name;
 
       await Promise.all([refreshBalance(), refreshMeta()]);
+      // Categorizar todas las EVM networks de mayor a menor saldo
+      await loadRanking();
 
       unsubscribe = subscribeToWalletEvents({
         onAccountsChanged: async (accounts) => {
@@ -105,11 +161,28 @@
             handleDisconnect();
           } else {
             address = accounts[0];
-            await Promise.all([refreshBalance(), refreshMeta()]);
+            await Promise.all([refreshBalance(), refreshMeta(), loadRanking()]);
           }
         },
-        onChainChanged: () => {
-          window.location.reload();
+        onChainChanged: async (hexChainId) => {
+          // Actualizar estado sin recargar la página
+          try {
+            // hexChainId viene como "0x..." desde EIP-1193
+            const dec = hexChainId ? BigInt(hexChainId).toString() : chainId;
+            chainId = dec;
+            // Reconstruir provider para evitar cache de red en ethers
+            try {
+              const injected = await getPaliProvider();
+              providerRef = new BrowserProvider(injected);
+              signerRef = await providerRef.getSigner();
+            } catch {}
+            const net = await getNetwork(providerRef);
+            chainId = net.chainId;
+            networkName = net.name;
+            await Promise.all([refreshBalance(), refreshMeta()]);
+          } catch {
+            window.location.reload();
+          }
         },
       });
     } catch (err) {
@@ -134,6 +207,9 @@
     txError = "";
     signature = "";
     sigError = "";
+    rankedNetworks = [];
+    rankingError = "";
+    isRanking = false;
     copied = false;
     unsubscribe();
   }
@@ -151,7 +227,7 @@
   }
 
   async function refreshAll() {
-    await Promise.all([refreshBalance(), refreshMeta()]);
+    await Promise.all([refreshBalance(), refreshMeta(), loadRanking()]);
   }
 
   async function handleSend() {
@@ -348,6 +424,100 @@
             <span class="mono meta">
               BLOQUE {blockNumber ?? "--"} · GAS {gasGwei ?? "--"} GWEI
             </span>
+            <div class="switch-row">
+              <select
+                class="fld mono fld--select"
+                bind:value={selectedChainId}
+                disabled={isSwitching}
+              >
+                <option value="">SELECCIONA RED PARA CAMBIAR</option>
+                {#each EVM_NETWORKS as net}
+                  <option value={net.chainId}>{net.name.toUpperCase()} / {net.chainId}</option>
+                {/each}
+              </select>
+              <button
+                class="ops ops--solid ops--mini"
+                on:click={() => handleSwitchNetwork()}
+                disabled={isSwitching || !selectedChainId}
+                title="Cambiar de red sin abrir Pali manualmente"
+              >
+                {isSwitching ? "CAMBIANDO…" : "CAMBIAR"}
+              </button>
+            </div>
+            {#if switchError}
+              <p class="mono err">X {switchError}</p>
+            {:else if isSwitching}
+              <span class="mono meta">SOLICITANDO CAMBIO A LA WALLET…</span>
+            {/if}
+          </div>
+        </div>
+
+        <div class="row">
+          <span class="row__k monodim">RANKING EVM</span>
+          <div class="row__v row__stack">
+            <div class="ranking-head">
+              <span class="mono meta">ORDENADO DE MAYOR A MENOR SALDO</span>
+              <button class="ops ops--mini" on:click={loadRanking} disabled={isRanking}>
+                <RefreshCw size={12} />
+                {isRanking ? "CARGANDO" : "ACTUALIZAR"}
+              </button>
+            </div>
+            {#if isRanking}
+              <span class="mono meta">CONSULTANDO RPCs…</span>
+            {:else if rankingError}
+              <p class="mono err">X {rankingError}</p>
+            {:else if rankedNetworks.length === 0}
+              <span class="mono meta">SIN DATOS — PULSA ACTUALIZAR</span>
+            {:else}
+              <ol class="ranking">
+                {#each rankedNetworks as net, i}
+                  <li
+                    class="ranking__item"
+                    class:ranking__item--top={i === 0 && net.balanceWei !== 0n}
+                    class:ranking__item--zero={net.balanceWei === 0n}
+                    class:ranking__item--active={net.chainId === chainId}
+                  >
+                    <span class="ranking__pos mono">{String(i + 1).padStart(2, "0")}</span>
+                    <span class="ranking__net">
+                      <span class="mono ranking__name">{net.name.toUpperCase()}</span>
+                      <span class="mono dim ranking__chain">/ {net.chainId} · {net.symbol}</span>
+                      {#if net.chainId === chainId}
+                        <span class="mono" style="font-size:0.55rem;color:#34d399"> · ACTIVA</span>
+                      {/if}
+                      {#if net.error}
+                        <span class="mono err" style="font-size: 0.55rem" title={net.error}> · {net.errorShort ?? "RPC no disponible"}</span>
+                      {/if}
+                    </span>
+                    <span class="ranking__bal mono">{net.balance} {net.symbol}</span>
+                    {#if net.chainId !== chainId}
+                      <button
+                        class="mini"
+                        on:click={() => handleSwitchNetwork(net.chainId)}
+                        disabled={isSwitching}
+                        title="Cambiar a {net.name} sin ir a Pali"
+                      >
+                        <ArrowUpRight size={12} />
+                      </button>
+                    {:else}
+                      <span class="mini" style="opacity:0.35;pointer-events:none" title="Red activa">
+                        <Check size={12} />
+                      </span>
+                    {/if}
+                    {#if net.explorer}
+                      <a
+                        class="mini"
+                        href="{net.explorer}/address/{address}"
+                        target="_blank"
+                        rel="noreferrer"
+                        title="VER EN EXPLORADOR"
+                      >
+                        <ExternalLink size={12} />
+                      </a>
+                    {/if}
+                  </li>
+                {/each}
+              </ol>
+            {/if}
           </div>
         </div>
 
@@ -909,6 +1079,32 @@
     border-bottom-color: #ff3d00;
   }
 
+  .fld--select {
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 0;
+    padding: 0.6rem 0.6rem;
+    background: #0f0f11;
+    cursor: pointer;
+  }
+  .fld--select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .fld--select option {
+    background: #0f0f11;
+    color: #ececee;
+  }
+
+  .switch-row {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    width: 100%;
+  }
+  .switch-row .fld--select {
+    flex: 1;
+  }
+
   .flds {
     display: flex;
     gap: 0.9rem;
@@ -978,6 +1174,87 @@
     flex: 1;
     gap: 1rem;
     min-height: 0;
+  }
+
+  .ops--mini {
+    padding: 0.45rem 0.7rem;
+    font-size: 0.62rem;
+    gap: 0.4rem;
+  }
+
+  .ranking-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    width: 100%;
+  }
+
+  .ranking {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .ranking__item {
+    display: grid;
+    grid-template-columns: 2.2rem 1fr auto auto auto;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.65rem 0.7rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+    transition: background 0.2s ease;
+  }
+  .ranking__item--active {
+    background: rgba(52, 211, 153, 0.06);
+    border-left: 2px solid #34d399;
+  }
+  .ranking__item:last-child {
+    border-bottom: none;
+  }
+  .ranking__item--top {
+    background: rgba(255, 61, 0, 0.08);
+    border-left: 2px solid #ff3d00;
+  }
+  .ranking__item--zero {
+    opacity: 0.55;
+  }
+
+  .ranking__pos {
+    font-size: 0.74rem;
+    letter-spacing: 0.1em;
+    color: #ff3d00;
+    font-weight: 700;
+  }
+  .ranking__item--zero .ranking__pos {
+    color: #5f5f6b;
+  }
+
+  .ranking__net {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem;
+    min-width: 0;
+  }
+  .ranking__name {
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .ranking__chain {
+    font-size: 0.6rem;
+  }
+  .ranking__bal {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
   }
 
   @media (max-width: 900px) {
